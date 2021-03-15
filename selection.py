@@ -70,8 +70,7 @@ def plot_learning_curves(model, X, y, cv=3, scoring=None, figsize=(10,5), info="
     test_scores_std = np.std(test_scores, axis=1)
     # setup plot
     fig, ax = plt.subplots(figsize=figsize)
-    final_gap = train_scores_mean[-1] - test_scores_mean[-1]
-    ax.set_title(f"Learning Curves - score_gap={final_gap:.4f}")
+    ax.set_title("Learning Curves " + model["classifier"])
     ax.set_xlabel('No. Training Examples')
     ax.set_ylabel('Scores')
     ax.fill_between(train_sizes, train_scores_mean - train_scores_std,
