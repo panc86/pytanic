@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 import pipelines
 from selection import (
     show_missing_values, get_encoded_features,
-    plot_coefficients, plot_learning_curves
+    plot_learning_curves, plot_coefficients, plot_features_importance,
+    plot_features_correlation, plot_features_dependence
 )
 
 # prepare data
@@ -93,13 +94,27 @@ X_test_tr = pd.DataFrame(
 )
 # what predictors have missing values?
 show_missing_values(X_train_tr, X_test_tr)
-# how is the importance of features?
-plot_coefficients(p0, X_train_tr)
-# positive coefficients such as Age_0 and Fare are likely
-# associated with the survival of a passenger. Whereas negative
-# coefficients are associated with the death of a passenger.
-# However, looking at the coefficient plot to gauge feature
-# importance can be misleading as some of them vary on a small scale,
-# while others, like Age, varies a lot more, several decades.
-# This is visible if we compare their standard deviations.
+
+# EXPERIMENT 1.1
+# features selection by statistical significance
+plot_coefficients(p0, X_train_tr, info="p0")
+# positive coefficients such as Age_0 and Fare are likely associated with the survival of a passenger. Whereas negative coefficients are associated with the death of a passenger. However, looking at the coefficient plot to gauge feature
+# importance can be misleading as some of them vary on a small scale, while others, like Age, varies a lot more, several decades. This is visible if we compare their standard deviations.
+plot_features_importance(p0, X_train_tr, info="p0")
+
+# EXPERIMENT 1.2
+plot_features_correlation(X_train_tr, info="p0")
+plot_features_dependence(X_train_tr, info="p0")
+# Pclass_3 can be (100%) predicted from Fare so we should remove Pclass and still obtain equivalent results
+
+# EXPERIMENT 1.3
+# engineer new features from the existing one
+X_train["Family_size"] = 1 + X_train["SibSp"] + X_train["Parch"]
+#numeric_features = 
+# build pipeline
+p0, params = pipelines.baseline_pipeline(numeric_features, categorical_features)
+# grid search best hyperparameters config
+p0_gs = GridSearchCV(p0, params, verbose=1, n_jobs=-1).fit(X_train, y_train)
+print("score:", p0_gs.best_score_)
+print("params:", p0_gs.best_params_)
 
