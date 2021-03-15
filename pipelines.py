@@ -1,3 +1,4 @@
+import numpy as np
 # PIPELINES
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer, SimpleImputer
@@ -16,13 +17,15 @@ def baseline_pipeline(numeric, categorical, random_state=42):
         {
             "transformer__num__imputer__strategy": ["mean", "median"],
             "transformer__cat__imputer__strategy": ["most_frequent"],
-            "transformer__cat__onehot__drop": ["if_binary", "first"]
+            "transformer__cat__onehot__drop": ["if_binary", "first"],
+            "classifier__C": np.logspace(-3, 3, 15)
         },
         {
             "transformer__num__imputer__strategy": ["mean", "median"],
             "transformer__cat__imputer__strategy": ["constant"],
             # If left to the default, fill_value will be 0 when imputing numerical data and “missing_value” for strings or object data types.
-            "transformer__cat__onehot__drop": ["if_binary", "first"]
+            "transformer__cat__onehot__drop": ["if_binary", "first"],
+            "classifier__C": np.logspace(-3, 3, 15)
         }
     ]
     # numeric
