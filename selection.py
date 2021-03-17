@@ -3,9 +3,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-#from collections import namedtuple
-#from sklearn.model_selection import train_test_split
-from sklearn.model_selection import cross_val_score, learning_curve
+# default model for features importance computation
+from sklearn.svm import LinearSVC
+from sklearn.model_selection import (
+    cross_validate, RepeatedKFold, learning_curve
+)
 import rfpimp
 
 
@@ -13,30 +15,18 @@ def show_missing_values(train, test):
     """
     Return concatenated count of missing values for train and test sets.
     """
-    na = pd.concat([train.isna().sum(), test.isna().sum()], axis=1)
-    na.columns = ['train', 'test']
-    print(na)
+    na_dist = pd.concat([train.isna().sum(), test.isna().sum()], axis=1)
+    na_dist.columns = ['train', 'test']
+    return na_dist
 
 
-def column_indices(df, cols):
-    # get column index
-    return [df.columns.get_loc(c) for c in cols]
-
-
-def get_encoded_features(transformer, categorical_features):
-    encoder = transformer.named_transformers_["cat"].named_steps["onehot"]
-    return encoder.get_feature_names(categorical_features)
-
-
-def plot_learning_curves(model, X, y, cv=3, scoring=None, figsize=(10,5), info=""):
+def plot_learning_curves(clf, X, y, cv=10, figsize=(10,5), info=""):
     """
     How the model learns on a growing number of training examples?
     Source: https://scikit-learn.org/stable/auto_examples/model_selection/plot_learning_curve.html
     """
-    # compute scores/training_sizes
-    train_sizes = np.linspace(0.1, 1.0, 5)
-    train_sizes, train_scores, test_scores = learning_curve(
-        model, X, y, cv=cv, scoring=scoring, train_sizes=train_sizes, n_jobs=-1
+    intervals, train_scores, test_scores = learning_curve(
+        clf, X, y, cv=cv, train_sizes=np.linspace(.1, 1., 5), n_jobs=-1
     )
     train_scores_mean = np.mean(train_scores, axis=1)
     train_scores_std = np.std(train_scores, axis=1)
@@ -44,21 +34,21 @@ def plot_learning_curves(model, X, y, cv=3, scoring=None, figsize=(10,5), info="
     test_scores_std = np.std(test_scores, axis=1)
     # setup plot
     fig, ax = plt.subplots(figsize=figsize)
-    ax.set_title("Learning Curves " + model["classifier"])
+    ax.set_title(f"Learning Curves {clf}")
     ax.set_xlabel('No. Training Examples')
     ax.set_ylabel('Scores')
-    ax.fill_between(train_sizes, train_scores_mean - train_scores_std,
+    ax.fill_between(intervals, train_scores_mean - train_scores_std,
                         train_scores_mean + train_scores_std, alpha=0.2,
                         color="r")
-    ax.fill_between(train_sizes, test_scores_mean - test_scores_std,
+    ax.fill_between(intervals, test_scores_mean - test_scores_std,
                         test_scores_mean + test_scores_std, alpha=0.2,
                         color="g")
-    ax.plot(train_sizes, train_scores_mean, 'o-', color="r", label='Training score')
-    ax.plot(train_sizes, test_scores_mean, 'o-', color="g", label='Cross-validation score')
+    ax.plot(intervals, train_scores_mean, 'o-', color="r", label='Training score')
+    ax.plot(intervals, test_scores_mean, 'o-', color="g", label='Cross-validation score')
     ax.legend(loc='lower right')
     ax.grid(True)
     fig.savefig('img/learning_curves_'+info, bbox_inches='tight')
-    plt.close('all')
+    plt.close(fig)
 
 
 def plot_features_correlation(X, figsize=(6,5), info=""):
@@ -70,7 +60,7 @@ def plot_features_correlation(X, figsize=(6,5), info=""):
         X.corr(), annot=True, fmt='.2f', ax=ax, vmin=-1, vmax=1, cmap='RdBu_r'
     )
     fig.savefig('img/correlation_'+info, bbox_inches='tight')
-    plt.close('all')
+    plt.close(fig)
 
 
 def plot_features_dependence(X, figsize=(7,6), info=""):
@@ -83,59 +73,48 @@ def plot_features_dependence(X, figsize=(7,6), info=""):
     fig = plt.figure(figsize=figsize)
     rfpimp.plot_dependence_heatmap(rfpimp.feature_dependence_matrix(X))
     fig.savefig('img/rfpimp_dependence_'+info, bbox_inches='tight')
-    plt.close('all')
+    plt.close(fig)
 
 
-def plot_coefficients(pipeline, X, figsize=(18, 7), info=""):
-    fig, [ax1, ax2, ax3] = plt.subplots(1, 3, figsize=figsize)
-    columns = X.columns.values
-    pd.DataFrame(
-        pipeline["classifier"].coef_[0],
-        columns=['Coefficients'],
-        index=columns
-    ).plot(kind='barh', ax=ax1)
-    ax1.axvline(x=0, color='.5')
-    # with standard deviation normalization
-    pd.DataFrame(
-        X.std(axis=0),
-        columns=["Stddev"],
-        index=columns
-    ).plot(kind='barh', ax=ax2)
-    # how is the normalized importance of features (by stddev)?
-    coefs_norm = pd.DataFrame(
-        pipeline["classifier"].coef_[0] * X.std(axis=0),
-        columns=['Normalized, Coefficients'], index=columns
+def plot_coefficient_importance(X, y, random_state=42, figsize=(7,6), info=""):
+    """
+    Plot the coefficient importance and its variability on CV repeated folds.
+    X is the transformed dataset.
+    Tn: By default, the classifier to compute the coefficients is LinearSVC(),
+    using the following hyper-parameters:
+      - C=1.0
+      - penalty="l1"
+      - dual=False
+    """
+    clf = LinearSVC(C=1., penalty="l1", dual=False, random_state=random_state)
+    cv_model = cross_validate(
+        clf, X, y, cv=RepeatedKFold(n_splits=5, n_repeats=5),
+        return_estimator=True, n_jobs=-1
     )
-    _ = coefs_norm.plot(kind='barh', ax=ax3)
-    ax3.axvline(x=0, color='.5')
-    fig.savefig('img/coef_by_stdev_'+info, bbox_inches='tight')
-    plt.close('all')
-    return coefs_norm
-
-
-def plot_features_importance(pipeline, X, figsize=(7,6), info=""):
+    # variability
+    X_std = X.std(axis=0)
+    # compute coefficients by variability as DataFrame
+    coefs = pd.DataFrame(
+        [clf.coef_[0] * X_std for clf in cv_model['estimator']],
+        columns=X.columns
+    )
     fig, ax = plt.subplots(figsize=figsize)
-    I = pd.DataFrame()
-    I['Features'] = X.columns.values
-    I['Importance'] = pipeline["classifier"].coef_[0]
-    I = I.sort_values('Importance', ascending=False).set_index('Features')
-    rfpimp.plot_importances(
-        I, width=5, color='#FDDB7D', ax=ax,
-        title="Feature importance via average gini/variance drop (sklearn)"
-    )
-    fig.savefig('img/rfpimp_importance_'+info, bbox_inches='tight')
-    plt.close('all')
-    return I
+    sns.stripplot(data=coefs, orient='h', color='k', alpha=0.5, ax=ax)
+    sns.boxplot(data=coefs, orient='h', color='cyan', saturation=0.5, ax=ax)
+    ax.axvline(x=0, color='.5')
+    ax.set_xlabel('Coefficient importance')
+    ax.set_title('Coefficient importance and (std) variability')
+    plt.tight_layout()
+    fig.savefig('img/coef_importance_'+info, bbox_inches='tight')
+    plt.close(fig)
 
 
-# def hypotesis_testing():
-#     fig, ax = plt.subplots(figsize=(8, 4))
-#     ids = hypotheses_df['id']
-#     ax.barh(ids, hypotheses_df[scoring], xerr=hypotheses_df['error'], align='center', alpha=0.5, ecolor='black', capsize=10)
-#     ax.set_xlabel(scoring.title())
-#     ax.set_xlim(.7, .95)
-#     ax.set_yticks(ids)
-#     ax.set_yticklabels(ids)
-#     ax.set_title('Cross Validation Report')
-#     ax.xaxis.grid(True)
-#     plt.tight_layout()
+def get_accuracy(clf, X_train, y_train, X_test):
+    """
+    Evaluate classifer accuracy against leaked y_test set.
+    """
+    y_true = pd.read_csv("predictions/y_leaked.csv", index_col="PassengerId")
+    clf = clf.fit(X_train, y_train)
+    print("Accuracy score on training:", clf.score(X_train, y_train))
+    print("Accuracy score on test:", clf.score(X_test, y_true))
+    return y_true
