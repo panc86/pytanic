@@ -6,15 +6,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 # custom libs
-import pipeline
-from selection import (
-    get_accuracy,
-    show_missing_values,
-    plot_learning_curves,
-    plot_coefficient_importance,
-    plot_features_correlation,
-    plot_features_dependence
-)
+import selector
 
 # prepare repo
 if not os.path.exists("predictions"):
@@ -27,9 +19,12 @@ if os.path.exists("img"):
 # load the training and test data
 train = pd.read_csv('./data/train.csv', index_col='PassengerId')
 test = pd.read_csv('./data/test.csv', index_col='PassengerId')
+# leaked target
+y_test = pd.read_csv("predictions/y_leaked.csv", index_col="PassengerId")
+
 # missing values count
 print("Missing values count")
-print(show_missing_values(train, test))
+print(selector.show_missing_values(train, test))
 # marginal distributions and pairwise relationships between the features
 # it is marginal because it describes the behavior of a specific variable without keeping the others fixed.
 #g = sns.pairplot(train, hue="Survived", kind='reg', diag_kind='kde')
@@ -58,40 +53,14 @@ cat_cols = ["Name", "Sex", "Ticket", "Cabin", "Embarked"]
 for temp in [train, test]:
     temp[cat_cols] = temp[cat_cols].astype("category")
 # Pclass categorical feature can be considered either nominal or ordinal. For simplicity we consider it ordinal so we keep the number of features low.
-random_state = 42
-# extract target
-y_train = train["Survived"]
-# tag for plot classification
-info="P1"
-# choose predictors
-features = ["Age", "Fare", "SibSp", "Parch", "Pclass", "Sex", "Embarked"]
-X_train1 = train[features]
-X_test1 = test[features]
-# create pipeline
-p1, p1_scores, _ = pipeline.init_pipeline(X_train1, y_train)
-# should fail if called before run_transformer()
-#p1.named_steps["transformer"].transform(X_test)
-# should fail if called before run_transformer()
-#p1.named_steps["classifier"].predict(X_test)
-# run transformer
-X_train_tr1, transformer, tr_features = pipeline.run_transformer(X_train1, y_train, p1)
-# transform test set using transformer fitted on train set only
-X_test_tr1 = pd.DataFrame(transformer.transform(X_test1), columns=tr_features)
-# features correlation
-plot_features_correlation(X_train_tr1, info=info)
-# features imp and var
-plot_coefficient_importance(X_train_tr1, y_train, info=info)
-# learning curve
-plot_learning_curves(p1["classifier"], X_train_tr1, y_train, info=info)
-# test on leaked dataset
-y_true = get_accuracy(p1["classifier"], X_train_tr1, y_train, X_test_tr1)
+
 # the learning curve shows that the classifier is overfitting. This conclusion is drawn by the large variability (or errors) of the cross-validation score. Most likely, the classifier could benefit to reduce overfitting from more data points given the uptrend direction of both training and cross-validation curves. However, this is not possible in this case, therefore we need another way to help the model generalize better. We could reduce the number of features by means of the followings:
 #  - remove statistically insignificant features or features correlated with other features and not with target
 #  - engineer new features from the existing one
 #  - add Features Selection and/or Dimensionality Reduction in the pipeline
 
 # remove statistically insignificant features or features correlated with other features and not with target
-plot_features_dependence(X_train_tr1, info=info)
+
 # when all other features remain constant, i.e., conditional dependencies, negative coefficients such as Sex_male, Pclass_3, SibSp, and Age are likely associated with the death of a passenger. Whereas Fare is associated with the survival of a passenger. However, looking at the coefficient plot to gauge feature importance can be misleading as some of them vary on a small scale, while others, like Age, varies a lot more, several decades. This is visible if we compare their standard deviations. Pclass_3 is logically correlated with Pclass_2 as they were created from the same feature. However, Pclass_3 is also correlated with Fare and this may add confusion in the model. We plot the features dependence to confirm the correlations among features and find if we can get rid of misleading features. Pclass_3 can be (100%) predicted from Fare so we should remove Pclass and still obtain equivalent results
 
 # engineer new features from the existing one
@@ -100,10 +69,77 @@ plot_features_dependence(X_train_tr1, info=info)
 
 # FEATURES ENGINEERING
 
+# TITLE
 # title mapping
-title_map = {'Ms': 'Mrs', 'Mme': 'Mrs', 'Mlle': 'Miss'}
-title_map.update({t: 'Rare' for t in ['Dr', 'Rev', 'Sir', 'Don', 'Jonkheer', 'Lady', 'the Countess', 'Col', 'Major', 'Capt', 'Dona']})
-# engineer new features
+title_map = {'ms': 'mrs', 'mme': 'mrs', 'mlle': 'miss'}
+title_map.update({title: 'rare' for title in ['dr', 'rev', 'sir', 'don', 'jonkheer', 'lady', 'the countess', 'col', 'major', 'capt', 'dona']})
+# the Title of the passenger indicates gender, age, and social class
+def parse_title(name):
+    # title is between last and first names
+    title = name.split(',')[1].lstrip().split('.')[0].lower()
+    return title_map.get(title, title)
+
+# TICKET
+# we do not have metadata for Ticket so it is hard to make a valid hypothesis to engineer a feature out of it
+
+# BINNED
+from sklearn.linear_model import LogisticRegressionCV
+f = ["Age", "Fare", "SibSp", "Parch", "Pclass", "Sex", "Embarked"]
+y_train = train["Survived"]
+X_train = train[f]
+X_test = test[f]
+# create pipeline
+pipe, pipe_res, _ = selector.init_pipeline(X_train, y_train, cv=5)
+# transform training dataset
+train_tr, transf, enc_cols = selector.transform_dataset(pipe, X_train, y_train)
+test_tr = pd.DataFrame(transf.transform(X_test), columns=enc_cols)
+# evaluate binning
+reports = []
+f = ["Age", "Fare"]
+Cs = np.logspace(-4, 2, 50)
+f_med = train[f].median()
+f_train = train[f].fillna(f_med)
+f_test = test[f].fillna(f_med)
+print("Evaluate binning of", f)
+for b in range(2, 11):
+    # train bin
+    f_bin_train = pd.get_dummies(pd.concat([pd.cut(f_train[c], bins=b, labels=[f"{c}_{i}" for i in range(b)]) for c in f], axis=1)).reset_index(drop=True)
+    # test bin
+    f_bin_test = pd.get_dummies(pd.concat([pd.cut(f_test[c], bins=b, labels=[f"{c}_{i}" for i in range(b)]) for c in f], axis=1)).reset_index(drop=True)
+    # concatenated with transformed
+    X_bin_train = pd.concat([train_tr.drop(columns=f), f_bin_train], axis=1)
+    X_bin_test = pd.concat([test_tr.drop(columns=f), f_bin_test], axis=1)
+    # get pipeline classifier
+    model = pipe["classifier"].fit(X_bin_train, y_train)
+    # evaluate
+    report = {
+        "nbin": b,
+        "test_score": model.score(X_bin_test, y_test),
+        "train_score": model.score(X_bin_train, y_train)
+    }
+    reports.append(report)
+# assess
+df = pd.DataFrame(reports)
+print(df.sort_values("test_score", ascending=False))
+
+"""
+Binning helps but very little.
+   bin     score
+3    5  0.779904
+7    9  0.775120
+0    2  0.770335
+2    4  0.770335
+4    6  0.770335
+6    8  0.765550
+5    7  0.763158
+1    3  0.760766
+8   10  0.758373
+"""
+
+# FAMILYSIZE
+# CABININD
+# ISALONE
+# TITLE
 for df in [train, test]:
     # SibSp+Parch become FamilySize feature
     df["FamilySize"] = 1 + df["SibSp"] + df["Parch"]
@@ -111,43 +147,46 @@ for df in [train, test]:
     df["CabinInd"] = df["Cabin"].notna()
     # whether the passenger travels alone or not
     df["IsAlone"] = df['FamilySize'] == 1
-    # the Title of the passenger indicates gender, age, and social class
-    title = df["Name"].apply(lambda x: x.split(',')[1].split('.')[0].strip())
-    df["Title"] = title.apply(lambda t: title_map.get(t, t))
-    # bin Age and Fare
+    # passenger's title
+    df["Title"] = df["Name"].apply(parse_title).astype("category")
 
-# new features
-engineered = ["FamilySize", "CabinInd", "IsAlone", "Title"]
-
-
-
-
-
-# # run experiments
-# experiments = [(df1_train, df1_tesr),  (df2_train, df2_tesr), ]
-# for index, train_ex, test_ex in enumerate(experiments):
-#     # tag for plot classification
-#     info=f"exp_{index}"
-#     # choose predictors
-#     features = ["Age", "Fare", "FamilySize", "Pclass", "Sex", "Embarked"]
-#     X_train2 = train.assign(FamilySize=1+train["SibSp"]+train["Parch"])[features]
-#     X_test2 = test.assign(FamilySize=1+test["SibSp"]+test["Parch"])[features]
-#     # create pipeline
-#     p2, p2_scores, _ = pipeline.init_pipeline(X_train2, y_train)
-#     p2_scores - p1_scores
-#     # not much difference between the scores
-#     # run transformer
-#     X_train_tr2, transformer, tr_features = pipeline.run_transformer(X_train2, y_train, p2)
-#     # transform test set using transformer fitted on train set only
-#     X_test_tr2 = pd.DataFrame(transformer.transform(X_test2), columns=tr_features)
-#     # features correlation
-#     plot_features_correlation(X_train_tr2, info=info)
-#     plot_features_dependence(X_train_tr2, info=info)
-#     # features imp and var
-#     plot_coefficient_importance(X_train_tr2, y_train, info=info)
-#     # learning curve
-#     plot_learning_curves(p2["classifier"], X_train_tr2, y_train, info=info)
-#     # test on leaked dataset
-#     y_true = get_accuracy(p2["classifier"], X_train_tr2, y_train, X_test_tr2)
-
-# # END EXPERIMENTS
+# define hypotheses
+random_state = 42
+cv = 5
+# extract target
+y_train = train["Survived"]
+# define hypotheses with predictors
+h1 = ["Age", "Fare", "SibSp", "Parch", "Pclass", "Sex", "Embarked"]
+h2 = ["Age", "Fare", "SibSp", "Parch", "Pclass", "Sex", "Embarked", "FamilySize", "CabinInd", "IsAlone", "Title"]
+h3 = ["Age", "Pclass", "Sex", "FamilySize", "CabinInd", "IsAlone", "Title"]
+h4 = ["Age", "Fare", "SibSp", "Parch", "Sex", "FamilySize", "CabinInd", "IsAlone"]
+# run hypotheses
+for index, hypothesis in enumerate([h1, h2, h3, h4]):
+    # setup
+    train_h = train[hypothesis]
+    test_h = test[hypothesis]
+    # tag for plot classification
+    info = f"H_{index}"
+    print(info, "training shapes:", train_h.shape, y_train.shape)
+    print("predictors:", hypothesis)
+    # create pipeline
+    pipe, pipe_res, _ = selector.init_pipeline(train_h, y_train, cv=cv)
+    print("best_params:", _)
+    # evaluate pipeline against the (hypothesis) training dataset
+    selector.plot_learning_curves(pipe, train_h, y_train, cv=cv, info=info)
+    # transform training dataset
+    train_h_tr, transf, enc_cols = selector.transform_dataset(
+        pipe, train_h, y_train
+    )
+    # evaluate hypothesis via coefficients importance and variability
+    selector.plot_coefficient_importance(train_h_tr, y_train, cv=cv, info=info)
+    # features Pearson correlation
+    selector.plot_features_correlation(train_h_tr, info=info)
+    # features collinearity, i.e. dependence with other features than the target
+    selector.plot_features_dependence(train_h_tr, info=info)
+    # test on leaked dataset
+    test_h_tr = pd.DataFrame(transf.transform(test_h), columns=enc_cols)
+    selector.accuracy(
+        pipe["classifier"], train_h_tr, y_train, test_h_tr, y_test
+    )
+# END EXPERIMENTS
