@@ -17,37 +17,40 @@ def transform_titanic(X):
     """
     Transform Titanic data into ready-to-train dataset.
     """
-    # impute missing Ages
-    numeric = X.select_dtypes(exclude="category").columns
-    X.loc[:, numeric] = KNNImputer().fit_transform(X[numeric])
+    tmp = X.copy(deep=True)
+    # impute missing cat Embarked with mode
+    tmp.loc[tmp["Embarked"].isna(), "Embarked"] = tmp["Embarked"].value_counts().idxmax()
+    # impute missing numeric
+    numeric = tmp.select_dtypes(exclude="category").columns
+    tmp.loc[:, numeric] = KNNImputer().fit_transform(tmp[numeric])
     # add cabin indicator of missingness
-    X["CabinInd"] = features.cabin_indicator(X)
+    tmp["CabinInd"] = features.cabin_indicator(tmp)
     # frequency encoding ticket
-    ticket_map = X["Ticket"].value_counts()
-    X["TicketFreq"] = X["Ticket"].map(ticket_map)
+    ticket_map = tmp["Ticket"].value_counts()
+    tmp["TicketFreq"] = tmp["Ticket"].map(ticket_map)
     # transform name into name title and size
-    X["Title"] = features.passenger_title(X)
-    X["NameSize"] = features.passenger_name_size(X)
+    tmp["Title"] = features.passenger_title(tmp)
+    tmp["NameSize"] = features.passenger_name_size(tmp)
     # capture marriage
-    X["IsMarried"] = X["Title"] == "mrs"
+    tmp["IsMarried"] = tmp["Title"] == "mrs"
     # simplify sibsp and parch into binary
     # capture family size
-    family_size = X["SibSp"] + X["Parch"]
-    X["IsAlone"] = family_size == 0
-    X["IsSmallFamily"] = (0 < family_size) & (family_size < 3)
-    X["IsLargeFamily"] = family_size > 2
+    family_size = tmp["SibSp"] + tmp["Parch"]
+    tmp["IsAlone"] = family_size == 0
+    tmp["IsSmallFamily"] = (0 < family_size) & (family_size < 3)
+    tmp["IsLargeFamily"] = family_size > 2
     # simplify fares as the digits
-    X["FareAboveStd"] = X.Fare > X.Fare.std()
-    X["FareDigits"] = X["Fare"].astype(int).astype(str).apply(len)
+    tmp["FareAboveStd"] = tmp.Fare > tmp.Fare.std()
+    tmp["FareDigits"] = tmp["Fare"].astype(int).astype(str).apply(len)
     # capture children in variable
-    X["IsChild"] = X["Age"] < 15
+    tmp["IsChild"] = tmp["Age"] < 15
     # map sex to binary
-    X["IsFemale"] = X["Sex"] == "female"
+    tmp["IsFemale"] = tmp["Sex"] == "female"
     # prepare for training
-    X = X.drop(
+    X_tr = tmp.drop(
         columns=["Age", "Sex", "Name", "SibSp", "Parch", "Ticket", "Fare", "Cabin"]
-    ).pipe(pd.get_dummies, ["Pclass", "Embarked", "Title"], dummy_na=True)
-    return X
+    ).pipe(pd.get_dummies, ["Pclass", "Embarked", "Title"])
+    return X_tr
 
 
 class TitanicProcessor(BaseEstimator, TransformerMixin):
