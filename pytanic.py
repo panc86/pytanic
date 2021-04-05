@@ -51,14 +51,15 @@ y.value_counts(normalize=True)
 # make pipeline
 tpl, params = pipeline.titanic_pipeline()
 # eval full pipeline (baseline)
-print("CV score")
+print("CV score (train set)")
 selector.get_cv_scores(tpl, X, y).agg(["mean", "std"]).T
 # tuning
 pipeline.tuning(tpl, params, X, y, verbose=1)
 # EVALUATION
-# confusion matrix
 _ = tpl.fit(X, y)
-print("Test score:", tpl.score(test, y_test))
+print("CV score (test set)")
+selector.get_cv_scores(tpl, test, y_test).agg(["mean", "std"]).T
+# confusion matrix
 print("Plot confusion matrix")
 g = plot_confusion_matrix(tpl, test, y_test)
 g.figure_.savefig("artifacts/confusion_matrix", bbox_inches='tight')
@@ -72,6 +73,6 @@ type_I_err.to_csv("artifacts/type_I_errors.csv")
 type_II_mask = (y_test == 1) & (y_hat == 0)
 type_II_err = test.assign(Survived=y_test)[type_II_mask]
 type_II_err.to_csv("artifacts/type_II_errors.csv")
-# Sex influence is very high and it fool the model on predictions
 # save model
 joblib.dump(tpl, "artifacts/titanic_pipeline.joblib")
+
