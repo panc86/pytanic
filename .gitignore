@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# exclude img/
+img/
+
+# exclude predictions/
+predictions/
