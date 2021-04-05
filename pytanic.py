@@ -10,16 +10,16 @@ from sklearn.metrics import plot_confusion_matrix
 import selector
 import pipeline
 
-# prepare plots dir
-if os.path.exists("img"):
-    shutil.rmtree("img")
-    os.mkdir("img")
+# clean output dir
+if os.path.exists("artifacts"):
+    shutil.rmtree("artifacts")
+    os.mkdir("artifacts")
 # DATA PREP
 # load the training and test data
-train = pd.read_csv('./data/train.csv', index_col='PassengerId')
-test = pd.read_csv('./data/test.csv', index_col='PassengerId')
+train = pd.read_csv("data/train.csv", index_col='PassengerId')
+test = pd.read_csv("data/test.csv", index_col='PassengerId')
 # leaked target
-y_test = pd.read_csv("predictions/y_leaked.csv", index_col="PassengerId")
+y_test = pd.read_csv("data/y_leaked.csv", index_col="PassengerId")
 y_test = y_test.values.flatten()
 # ensure categorical types
 cat_cols = ["Name", "Sex", "Pclass", "Ticket", "Cabin", "Embarked"]
@@ -32,7 +32,7 @@ print(selector.show_missing_values(train, test))
 # it is marginal because it describes the behavior of a specific variable without keeping the others fixed.
 print("Plot marginal distributions")
 g = sns.pairplot(train, hue="Survived", kind='reg', diag_kind='kde')
-g.savefig('img/marginal_distributions', bbox_inches='tight')
+g.savefig('artifacts/marginal_dists', bbox_inches='tight')
 # decribe features
 print("Describe training")
 train.describe(include="all")
@@ -40,7 +40,7 @@ train.describe(include="all")
 print("Plot boxplots")
 fig, ax = plt.subplots(figsize=(10,10))
 train.hist(ax=ax)
-fig.savefig("img/boxplots", bbox_inches='tight')
+fig.savefig("artifacts/boxplots.png", bbox_inches='tight')
 # PROTOTYPING
 print("Start prototyping")
 # training data
@@ -58,21 +58,20 @@ pipeline.tuning(tpl, params, X, y, verbose=1)
 # EVALUATION
 # confusion matrix
 _ = tpl.fit(X, y)
+print("Test score:", tpl.score(test, y_test))
+print("Plot confusion matrix")
 g = plot_confusion_matrix(tpl, test, y_test)
-g.figure_.savefig("img/confusion_matrix", bbox_inches='tight')
+g.figure_.savefig("artifacts/confusion_matrix", bbox_inches='tight')
 # check quality of predictions
 y_hat = tpl.predict(test)
 # get type I errors (False Positive)
 type_I_mask = (y_test == 0) & (y_hat == 1)
 type_I_err = test.assign(Survived=y_test)[type_I_mask]
-print("\n5 type I errors")
-print(type_I_err)
+type_I_err.to_csv("artifacts/type_I_errors.csv")
 # get type II errors (False Negative)
 type_II_mask = (y_test == 1) & (y_hat == 0)
 type_II_err = test.assign(Survived=y_test)[type_II_mask]
-print("\n5 type II errors")
-print(type_II_err)
+type_II_err.to_csv("artifacts/type_II_errors.csv")
 # Sex influence is very high and it fool the model on predictions
-
 # save model
-joblib.dump(pipeline, 'titanic_pipeline.joblib')
+joblib.dump(tpl, "artifacts/titanic_pipeline.joblib")
